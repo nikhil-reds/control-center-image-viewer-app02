@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { mediaDocuments } from "@/lib/pdf-control";
 import type { PdfDirection } from "@/lib/pdf-control";
 import type { ControlOption } from "../control-options";
 import styles from "../control-center.module.css";
@@ -13,14 +14,47 @@ type ControlCenterProps = {
 
 export function ControlCenter({ options }: ControlCenterProps) {
   const [selectedOption, setSelectedOption] = useState<ControlOption | null>(null);
+  const [currentPage, setCurrentPage] = useState<number>(1);
   const [isSending, setIsSending] = useState(false);
   const [status, setStatus] = useState("");
+
+  // Sync state from server on option change and periodically while active
+  useEffect(() => {
+    if (!selectedOption) return;
+
+    let active = true;
+
+    async function syncState() {
+      try {
+        const response = await fetch("/api/pdf-control", { cache: "no-store" });
+        if (!response.ok) throw new Error("Sync failed");
+        
+        const data = await response.json();
+        if (active && data.documents?.[selectedOption.pdfId]) {
+          setCurrentPage(data.documents[selectedOption.pdfId].page);
+        }
+      } catch {
+        // Silently ignore sync failures in background
+      }
+    }
+
+    // Run immediately on select
+    void syncState();
+
+    // Poll state every 1 second
+    const interval = setInterval(syncState, 1000);
+
+    return () => {
+      active = false;
+      clearInterval(interval);
+    };
+  }, [selectedOption]);
 
   async function selectOption(option: ControlOption) {
     if (isSending) return;
 
     setIsSending(true);
-    setStatus("Opening…");
+    setStatus("Connecting…");
 
     try {
       const response = await fetch("/api/pdf-control", {
@@ -30,6 +64,11 @@ export function ControlCenter({ options }: ControlCenterProps) {
       });
 
       if (!response.ok) throw new Error("Activation failed");
+      
+      const data = await response.json();
+      const initialPage = data.documents?.[option.pdfId]?.page ?? 1;
+      
+      setCurrentPage(initialPage);
       setSelectedOption(option);
       setStatus("");
     } catch {
@@ -57,7 +96,13 @@ export function ControlCenter({ options }: ControlCenterProps) {
       });
 
       if (!response.ok) throw new Error("Command failed");
-      setStatus("Command sent");
+      
+      const data = await response.json();
+      if (data.document) {
+        setCurrentPage(data.document.page);
+      }
+      
+      setStatus("");
     } catch {
       setStatus("Unable to reach preview");
     } finally {
@@ -69,7 +114,7 @@ export function ControlCenter({ options }: ControlCenterProps) {
     if (isSending) return;
 
     setIsSending(true);
-    setStatus("Closing…");
+    setStatus("Disconnecting…");
 
     try {
       const response = await fetch("/api/pdf-control", {
@@ -110,12 +155,31 @@ export function ControlCenter({ options }: ControlCenterProps) {
     }
   }
 
+  const activeDoc = selectedOption
+    ? mediaDocuments.find((d) => d.id === selectedOption.pdfId)
+    : null;
+  const totalPages = activeDoc?.kind === "images" ? activeDoc.images.length : 0;
+
   return (
     <main className={styles.page}>
-      <div className={styles.glow} aria-hidden="true" />
+      {!selectedOption && (
+        <header className={styles.header}>
+          <h1 className={styles.headerTitle}>RUBENIUS SCREEN CONTROL</h1>
+          <p className={styles.headerSubtitle}>
+            Select a sequence below to broadcast and control on the main presentation display.
+          </p>
+          <div className={styles.statusBadge}>
+            <span className={styles.statusDot} />
+            <span>Live Sync Connected</span>
+          </div>
+        </header>
+      )}
+
       {selectedOption ? (
         <DetailScreen
           option={selectedOption}
+          currentPage={currentPage}
+          totalPages={totalPages}
           isSending={isSending}
           status={status}
           onNavigate={sendCommand}
@@ -124,10 +188,11 @@ export function ControlCenter({ options }: ControlCenterProps) {
         />
       ) : (
         <section className={styles.controls} aria-label="Treatment options">
-          {options.map((option) => (
+          {options.map((option, index) => (
             <ControlCard
               key={option.id}
               option={option}
+              index={index}
               onSelect={() => void selectOption(option)}
             />
           ))}
