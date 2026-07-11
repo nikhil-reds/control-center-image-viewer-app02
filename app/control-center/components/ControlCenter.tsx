@@ -22,6 +22,7 @@ export function ControlCenter({ options }: ControlCenterProps) {
   useEffect(() => {
     if (!selectedOption) return;
 
+    const pdfId = selectedOption.pdfId;
     let active = true;
 
     async function syncState() {
@@ -30,8 +31,8 @@ export function ControlCenter({ options }: ControlCenterProps) {
         if (!response.ok) throw new Error("Sync failed");
         
         const data = await response.json();
-        if (active && data.documents?.[selectedOption.pdfId]) {
-          setCurrentPage(data.documents[selectedOption.pdfId].page);
+        if (active && data.documents?.[pdfId]) {
+          setCurrentPage(data.documents[pdfId].page);
         }
       } catch {
         // Silently ignore sync failures in background
